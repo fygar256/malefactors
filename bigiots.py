@@ -1,304 +1,207 @@
 #!/usr/bin/env python3
-
 import curses
 import random
 import locale
 
-xsize = 40  # ゲーム画面サイズx
-ysize = 23  # ゲーム画面サイズy
-gamestat = 0  # ゲームの状態　０：プレイ中　１：負け　３：勝ち
-stdscr = curses.initscr()
+locale.setlocale(locale.LC_ALL, '')
+
+X_SIZE = 40
+Y_SIZE = 23
 CRASH = "Ｘ"
 SPACE = "　"
 
+DIRECTION_MAP = {
+    '7': (-1, -1), '8': (0, -1), '9': (1, -1),
+    'u': (-1, 0), '4': (-1, 0), 'i': (0, 0), '5': (0, 0), 'o': (1, 0), '6': (1, 0),
+    'j': (-1, 1), 'k': (0, 1), 'l': (1, 1), '1': (-1, 1), '2': (0, 1), '3': (1, 1)
+}
 
-def putchara(x, y, str):
-    #
-    # 画面に文字を表示する関数。
-    # 全角単位で扱っているので、
-    # x座標を２倍しています。
-    #
-    stdscr.addstr(int(y), int(x*2), str)
+def putchara(stdscr, x, y, char):
+    stdscr.addstr(int(y), int(x * 2), char)
 
+class Rock:
+    def __init__(self, max_count=120, char="＃"):
+        self.max_count = max_count
+        self.char = char
+        self.positions = []
 
-class enemy:
-    max = 12        # 最初の敵の数
-    l = [0]*40  # 敵が生きているかのフラグ
-    x = [0]*40  # 敵ｘ座標
-    y = [0]*40  # 敵ｙ座標
-    c = "Ｏ"  # 敵キャラクタ
+    def place_random(self, stdscr):
+        self.positions.clear()
+        for _ in range(self.max_count):
+            x = random.randint(0, X_SIZE-1)
+            y = random.randint(0, Y_SIZE-1)
+            self.positions.append((x, y))
+            putchara(stdscr, x, y, self.char)
 
-    def no():
-        global gamestat
-        f = 0
-        for j in range(enemy.max):
-            f += enemy.l[j]
-        if f == 0:
-            gamestat = 3
-        return
+class Enemy:
+    def __init__(self, max_count=12, char="Ｏ"):
+        self.max_count = max_count
+        self.char = char
+        self.positions = []
 
-    def move():
-        dx = 0
-        dy = 0
-        tx = 0
-        ty = 0
+    def place_random(self, stdscr, rocks):
+        self.positions.clear()
+        while len(self.positions) < self.max_count:
+            x = random.randint(0, X_SIZE-1)
+            y = random.randint(0, Y_SIZE-1)
+            if (x, y) not in rocks.positions:
+                self.positions.append((x, y))
+                putchara(stdscr, x, y, self.char)
 
-        for i in range(enemy.max):
-            if enemy.l[i] == 0:  # 敵が死んでいたら、スキップ
+    def move(self, stdscr, player, rocks, game):
+        new_positions = []
+        rocks_to_remove = []
+        for idx, (x, y) in enumerate(self.positions):
+            dx = 1 if x < player.x else -1 if x > player.x else 0
+            dy = 1 if y < player.y else -1 if y > player.y else 0
+            nx, ny = x + dx, y + dy
+
+            # 元の位置を消す
+            putchara(stdscr, x, y, SPACE)
+
+            # プレイヤー衝突チェック
+            if (nx, ny) == (player.x, player.y):
+                game.gamestat = 1
+                return  # すぐに終了
+
+            # 岩との衝突判定（赤演出）
+            if (nx, ny) in rocks.positions:
+                stdscr.addstr(ny, nx*2, "Ｘ", curses.color_pair(1))
+                stdscr.refresh()
+                curses.napms(100)  # 100ms 待つ
+                putchara(stdscr, nx, ny, SPACE)
+                rocks_to_remove.append((nx, ny))
                 continue
 
-            # プレイヤーを追いかけるように差分を求める
-            dx = 0
-            dy = 0
-            if enemy.x[i] < player.x:
-                dx = 1
-            if enemy.x[i] > player.x:
-                dx = -1
-            if enemy.y[i] < player.y:
-                dy = 1
-            if enemy.y[i] > player.y:
-                dy = -1
-
-            #  今の位置の敵の姿を消す
-            putchara(enemy.x[i], enemy.y[i], SPACE)
-
-            #  敵の動いた先の座標を求める
-            tx = enemy.x[i]+dx
-            ty = enemy.y[i]+dy
-
-            #
-            #  敵同士の衝突のチェック
-            #
-            for j in range(enemy.max):
-                if (i != j and enemy.l[j] == 1 and tx == enemy.x[j] and ty == enemy.y[j]):
-                    enemy.l[i] = 0     # 敵が生きているフラグを降ろす。
-
-            #
-            #  岩との衝突チェック
-            #
-            for j in range(rock.max):
-                if (rock.l[j] == 1 and tx == rock.x[j] and ty == rock.y[j]):
-                    rock.l[j] = 0
-                    enemy.l[i] = 0
-                    putchara(tx, ty, SPACE)  # 岩、敵を消す
-
-            enemy.x[i] = tx
-            enemy.y[i] = ty
-            if enemy.l[i] != 0:  # 生きているか？
-                putchara(tx, ty, enemy.c)  # 敵を描画
-
-
-class rock:
-    max = 120     # 最初の岩の数
-    l = [0]*320  # 岩があるかどうかのフラグ
-    x = [0]*320  # 岩ｘ座標
-    y = [0]*320  # 岩ｙ座標
-    c = "＃"  # 岩キャラクタ
-
-
-class player:
-    x = 0         # プレイヤーx座標
-    y = 0         # プレイヤーy座標
-    c = "＠"      # プレイヤーキャラクタ
-
-    def check_crash():
-        global gamestat
-        #
-        # プレイヤーが何かに当たったかどうかの判断
-        #
-        for i in range(enemy.max):
-            if (enemy.l[i] == 1 and player.x == enemy.x[i] and player.y == enemy.y[i]):
-                gamestat = 1
-        for i in range(rock.max):
-            if (rock.l[i] == 1 and player.x == rock.x[i] and player.y == rock.y[i]):
-                gamestat = 1
-        return
-
-    def move():
-        while True:
-            ch = stdscr.getkey()
-            if ch == '7':
-                dx = -1
-                dy = -1
-                break
-            elif ch == '8':
-                dx = 0
-                dy = -1
-                break
-            elif ch == '9':
-                dx = 1
-                dy = -1
-                break
-            elif ch == 'u' or ch == '4':
-                dx = -1
-                dy = 0
-                break
-            elif ch == 'i' or ch == '5':
-                dx = 0
-                dy = 0
-                break
-            elif ch == 'o' or ch == '6':
-                dx = 1
-                dy = 0
-                break
-            elif ch == 'j' or ch == '1':
-                dx = -1
-                dy = 1
-                break
-            elif ch == 'k' or ch == '2':
-                dx = 0
-                dy = 1
-                break
-            elif ch == 'l' or ch == '3':
-                dx = 1
-                dy = 1
-                break
-
-    # プレイヤーが画面からはみ出ないか？
-        px = player.x+dx
-        py = player.y+dy
-        if (px >= 0) and (px < xsize) and (py >= 0) and (py < ysize):
-            putchara(player.x, player.y, SPACE)  # プレイヤーを一歩進ませる。
-            player.x = px
-            player.y = py
-            putchara(px, py, player.c)
-
-
-class game:
-    #
-    # ゲームの説明画面
-    #
-    def instruction():
-        stdscr.clear()      # 画面のクリア
-
-        stdscr.addstr("Bigiots Ver 1.0\n")
-        stdscr.addstr("I created a word bigiot. bigiot means bigot plus idiot and big IoT.\n\n")
-        stdscr.addstr("Mission : kill all bigiots to survive!\n")
-        stdscr.addstr("Ｏ -- bigiots, chase player step by step.\n")
-        stdscr.addstr("＃ -- Rock, die bigiots and player when touched. \n")
-        stdscr.addstr("＠ -- Player, control for bigiots to crash to rock and survive!\n")
-        stdscr.addstr("\n")
-        stdscr.addstr("Key control:    　        Tenkey:     \n")
-        stdscr.addstr(" ７  ８  ９            ７　８  ９   \n")
-        stdscr.addstr("  ↖ ↑  ↗                 ↖ ↑  ↗     \n")
-        stdscr.addstr("ｕ← ｉ →ｏ             ４← ５→ ６   \n")
-        stdscr.addstr("  ↙ ↓  ↘                 ↙ ↓  ↘     \n")
-        stdscr.addstr(" ｊ  ｋ   ｌ           １  ２  ３   \n")
-        stdscr.addstr("\n")
-        stdscr.addstr(" 'i' and '5' move bigiots and don't move player\n")
-        stdscr.addstr("             Good Luck\n")
-        stdscr.addstr("hit key\n")
-
-        stdscr.getch()  # 一文字キー入力待ち。
-
-    #
-    # 初期化
-    #
-    def init():
-        global gamestat
-        stdscr.clear()        # 画面クリア
-
-        gamestat = 0         # ゲーム状態を初期化
-
-    #
-    #  岩を置く。
-    #  0番目はプレイヤーと敵との衝突回避のため、
-    #  ダミーを画面中心に置く。そのため、岩の個数は、
-    #  max-1となる。
-    #
-        for i in range(rock.max):
-            a = random.randint(0, xsize-1)
-            b = random.randint(0, ysize-1)
-            rock.x[i] = a
-            rock.y[i] = b
-            putchara(a, b, rock.c)
-            rock.l[i] = 1
-        rock.x[0] = int(xsize/2)
-        rock.y[0] = int(ysize/2)
-        rock.l[0] = 0
-
-    #  敵を岩とぶつからないように置く。
-        i = 0
-        while i < enemy.max:
-            f = 0
-            ex = random.randint(0, xsize-1)
-            ey = random.randint(0, ysize-1)
-            for j in range(rock.max):
-                if (ex == rock.x[j] and ey == rock.y[j]):
-                    f = f+1
-            if f == 0:
-                enemy.x[i] = ex
-                enemy.y[i] = ey
-                putchara(ex, ey, enemy.c)
-                enemy.l[i] = 1
-                i += 1
-
-    # プレイヤーを画面中心に置く。
-        player.x = xsize/2
-        player.y = int(ysize/2)
-        putchara(player.x, player.y, player.c)
-
-    #
-    #  ゲームの説明画面とメインのループ
-    #
-    def play():
-        while True:
-            game.instruction()
-
-            game.init()  # ゲームの初期化
-
-            game.main()  # ゲームのメイン処理
-
-            if gamestat == 0:
+            # 敵同士の衝突判定
+            if (nx, ny) in new_positions:
+                putchara(stdscr, nx, ny, SPACE)
+                new_positions = [pos for pos in new_positions if pos != (nx, ny)]
                 continue
 
-            if gamestat == 1:  # プレイヤー負け
-                putchara(player.x, player.y, CRASH)
-                stdscr.addstr(0, 0, "You Lose ")
+            new_positions.append((nx, ny))
+            putchara(stdscr, nx, ny, self.char)
 
-            if gamestat == 3:  # プレイヤー勝ち
-                stdscr.addstr(0, 0, "You Win! ")
+        # 岩を安全に削除
+        for pos in rocks_to_remove:
+            if pos in rocks.positions:
+                rocks.positions.remove(pos)
 
-            stdscr.refresh()
-            if game.tryagainp() == 0:
-                return   # リプレイしなければリターン。
+        self.positions = new_positions
 
-    #
-    #  ゲームのメイン処理
-    #
-    def main():
+class Player:
+    def __init__(self, char="＠"):
+        self.char = char
+        self.x = X_SIZE // 2
+        self.y = Y_SIZE // 2
+
+    def move(self, stdscr, key):
+        if key not in DIRECTION_MAP:
+            return
+        dx, dy = DIRECTION_MAP[key]
+        nx, ny = self.x + dx, self.y + dy
+        if 0 <= nx < X_SIZE and 0 <= ny < Y_SIZE:
+            putchara(stdscr, self.x, self.y, SPACE)
+            self.x, self.y = nx, ny
+            putchara(stdscr, self.x, self.y, self.char)
+
+class Game:
+    def __init__(self, stdscr):
+        self.stdscr = stdscr
+        self.player = Player()
+        self.rocks = Rock()
+        self.enemies = Enemy()
+        self.gamestat = 0
+
+        # 色ペア初期化（赤文字）
+        curses.start_color()
+        curses.init_pair(1, curses.COLOR_RED, curses.COLOR_BLACK)
+
+    def instruction(self):
+        self.stdscr.clear()
+        lines = [
+            "Bigiots Ver 1.0",
+            "I created a word bigiot. bigiot means bigot and idiot.",
+            "",
+            "Mission : kill all bigiots to survive!",
+            "Ｏ -- bigiots, chase player step by step.",
+            "＃ -- Rock, die bigiots and player when touched. ",
+            "＠ -- Player, control for bigiots to crash to rock and survive!",
+            "",
+            "#Key control:    　    Tenkey:",
+            "#７  ８  ９            ７　８  ９",
+            "#　↖ ↑  ↗　　　　　　　　↖ ↑  ↗",
+            "#Ｕ← Ｉ→ Ｏ　　　　　　４← ５→ ６",
+            "#　↙ ↓  ↘                ↙ ↓  ↘",
+            "#Ｊ  Ｋ  Ｌ　　　　　　１  ２  ３",
+            "",
+            " 'i' and '5' move bigiots and don't move player",
+            "             Good Luck",
+            "hit key"
+        ]
+        start_y = max((Y_SIZE - len(lines)) // 2, 0)
+        for i, line in enumerate(lines):
+            if len(line)>=1 and line[0]=='#':
+                start_x=20
+                line=line[1:]
+            else:
+                start_x = max((X_SIZE*2 - len(line)) // 2, 0)
+            self.stdscr.addstr(start_y + i, start_x, line)
+        self.stdscr.getch()
+
+    def init_game(self):
+        self.stdscr.clear()
+        self.gamestat = 0
+        self.rocks.place_random(self.stdscr)
+        self.enemies.place_random(self.stdscr, self.rocks)
+        putchara(self.stdscr, self.player.x, self.player.y, self.player.char)
+
+    def main_loop(self):
+        while self.gamestat == 0:
+            self.stdscr.refresh()
+            key = self.stdscr.getkey()
+            self.player.move(self.stdscr, key)
+            self.check_crash()
+            if self.gamestat != 0:
+                break
+            self.enemies.move(self.stdscr, self.player, self.rocks, self)
+            self.check_crash()
+            if self.gamestat != 0:
+                break
+            if not self.enemies.positions:
+                self.gamestat = 3
+
+    def check_crash(self):
+        if (self.player.x, self.player.y) in self.enemies.positions or \
+           (self.player.x, self.player.y) in self.rocks.positions:
+            self.gamestat = 1
+
+    def play(self):
         while True:
-            stdscr.refresh()
+            self.instruction()
+            self.init_game()
+            self.main_loop()
 
-            player.move()
-            player.check_crash()
-            if gamestat != 0:
-                return
+            if self.gamestat == 1:
+                putchara(self.stdscr, self.player.x, self.player.y, CRASH)
+                self.stdscr.addstr(0, 0, "You Lose ")
+            elif self.gamestat == 3:
+                self.stdscr.addstr(0, 0, "You Win! ")
 
-            enemy.move()
-            player.check_crash()
-            if gamestat != 0:
-                return
+            self.stdscr.refresh()
+            self.stdscr.addstr(1, 0, "Try Again? [y/n]")
+            while True:
+                ch = self.stdscr.getkey()
+                if ch == 'n':
+                    return
+                if ch == 'y':
+                    break
 
-            enemy.no()
-            if gamestat != 0:
-                return
+def main(stdscr):
+    curses.noecho()
+    curses.curs_set(0)
+    game = Game(stdscr)
+    game.play()
 
-    def tryagainp():
-        stdscr.addstr(1, 0, "Try Again? [y/n]")
-        while True:
-            ch = stdscr.getkey()
-            if ch == 'n':
-                return(0)
-            if ch == 'y':
-                return(1)
+curses.wrapper(main)
 
-
-locale.setlocale(locale.LC_ALL, '')  # curses で、UTF-8 を使うために、
-                                     # LC_ALLをセットする。
-
-curses.noecho()  # 　キーボードエコーをなしにする
-curses.curs_set(0)
-game.play()             # ゲームを走らせる。
-curses.endwin()         # 画面を閉じる。
-exit(0)  # 終了。
